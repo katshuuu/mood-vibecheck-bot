@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: mood-vibecheck-bot
+    runtime: go
+    repo: https://github.com/katshuuu/mood-vibecheck-bot
+    branch: main
+    buildCommand: go build -o mood-bot
+    startCommand: ./mood-bot
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        value: 8341440596:AAG6sTQLcOqvGMdNu3EN7bTbvKnj3FSIBjY
+      - key: PORT
+        value: 10000
