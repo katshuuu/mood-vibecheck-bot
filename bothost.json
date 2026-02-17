@@ -1,5 +1,6 @@
 {
     "name": "Flower Test Bot",
+    "language": "go",
     "entry": "main.go",
     "build": "go build -o flower-bot",
     "run": "./flower-bot",
