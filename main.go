@@ -278,15 +278,15 @@ func sendQuestion(bot *tgbotapi.BotAPI, chatID int64, step int) {
 		options = []string{"Плавные линии ⭕️", "Асимметрия 🔷", "Волны 🌊", "Минимализм ▫️"}
 		photoPaths = []string{"photos/round.jpg", "photos/asym.jpg", "photos/wave.jpg", "photos/mini.jpg"}
 	case 5:
-		text = "🐰 **Какой ты Барбоскин?**"
+		text = "🐶 **Какой ты Барбоскин?**"
 		options = []string{"Дружок⚡️", "Роза🌸", "Малыш🐣", "Гена📚"}
 		photoPaths = []string{"photos/krosh.jpg", "photos/piglet.jpg", "photos/tigger.jpg", "photos/owl.jpg"}
 	case 6:
-		text = "😂 **Какой мем тебе ближе?)**"
+		text = " **Какой мем тебе ближе?)**"
 		options = []string{"1", "2", "3", "4"}
 		photoPaths = []string{"photos/philo.jpg", "photos/chaos.jpg", "photos/romantic.jpg", "photos/sarcasm.jpg"}
 	case 7:
-		text = "⏰ **В какое время вы наиболее активны?**"
+		text = "⏰ **В какое время ты наиболее активен?**"
 		options = []string{"Утро 🌅", "День ☀️", "Вечер 🌆", "Ночь 🌙"}
 		photoPaths = []string{"photos/morning.jpg", "photos/day.jpg", "photos/evening.jpg", "photos/night.jpg"}
 	}
