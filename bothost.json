@@ -1,0 +1,11 @@
+{
+    "name": "Flower Test Bot",
+    "entry": "main.go",
+    "build": "go build -o flower-bot",
+    "run": "./flower-bot",
+    "port": 8080,
+    "env": {
+        "TELEGRAM_BOT_TOKEN": "8341440596:AAG6sTQLcOqvGMdNu3EN7bTbvKnj3FSIBjY",
+        "PORT": "8080"
+    }
+}
