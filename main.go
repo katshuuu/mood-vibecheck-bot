@@ -101,7 +101,7 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 
 func startTest(bot *tgbotapi.BotAPI, chatID int64) {
 	// Приветственное сообщение с легендой
-	welcomeMsg := "_You’re the best,_ **пройди наш тест🫧**\n\n" +
+	welcomeMsg := "_you’re the best,_ **пройди наш тест🫧**\n\n" +
 		"ответь на небольшие вопросы быстро,\n" +
 		"за 2 минуты\n\n" +
 		"_ready?) поехали👇_"
@@ -262,31 +262,31 @@ func sendQuestion(bot *tgbotapi.BotAPI, chatID int64, step int) {
 
 	switch step {
 	case 1:
-		text = "🌅 **Выбери любимое время года**"
+		text = " _выбери любимое время года:_"
 		options = []string{"Весна 🌸", "Лето ☀️", "Осень 🍂", "Зима ❄️"}
 		photoPaths = []string{"photos/spring.jpg", "photos/summer.jpg", "photos/autumn.jpg", "photos/winter.jpg"}
 	case 2:
-		text = "🎨 **Какое цветовое сочетание ближе?**"
+		text = " _какое цветовое сочетание тебе ближе?_ "
 		options = []string{"Пастельные тона 🌸", "Яркие краски 🌈", "Глубокие оттенки 🌑", "Натуральные цвета 🌿"}
 		photoPaths = []string{"photos/pastel.jpg", "photos/bright.jpg", "photos/dark.jpg", "photos/natural.jpg"}
 	case 3:
-		text = "🏞 **Где ты чувствуешь спокойствие?**"
+		text = " _где ты чувствуешь спокойствие?_ "
 		options = []string{"У воды 🌊", "В лесу 🌲", "В городе 🏙", "Дома 🏡"}
 		photoPaths = []string{"photos/water.jpg", "photos/forest.jpg", "photos/city.jpg", "photos/home.jpg"}
 	case 4:
-		text = "📐 **Какая форма нравится больше остальных?**"
+		text = " _какая форма нравится больше остальных?_ "
 		options = []string{"Плавные линии ⭕️", "Асимметрия 🔷", "Волны 🌊", "Минимализм ▫️"}
 		photoPaths = []string{"photos/round.jpg", "photos/asym.jpg", "photos/wave.jpg", "photos/mini.jpg"}
 	case 5:
-		text = "🐶 **Какой ты Барбоскин?**"
+		text = " _а какой ты Барбоскин?_ "
 		options = []string{"Дружок⚡️", "Роза🌸", "Малыш🐣", "Гена📚"}
 		photoPaths = []string{"photos/krosh.jpg", "photos/piglet.jpg", "photos/tigger.jpg", "photos/owl.jpg"}
 	case 6:
-		text = " **Какой мем тебе ближе?)**"
+		text = " _какой мем тебе ближе?)_ "
 		options = []string{"1", "2", "3", "4"}
 		photoPaths = []string{"photos/philo.jpg", "photos/chaos.jpg", "photos/romantic.jpg", "photos/sarcasm.jpg"}
 	case 7:
-		text = "⏰ **В какое время ты наиболее активен?**"
+		text = " _в какое время ты наиболее активен?_ "
 		options = []string{"Утро 🌅", "День ☀️", "Вечер 🌆", "Ночь 🌙"}
 		photoPaths = []string{"photos/morning.jpg", "photos/day.jpg", "photos/evening.jpg", "photos/night.jpg"}
 	}
