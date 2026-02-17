@@ -1,0 +1,10 @@
+# Binaries
+flower-test-bot
+*.exe
+
+# Dependencies
+vendor/
+
+# IDE
+.idea/
+.vscode/
