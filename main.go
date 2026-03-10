@@ -11,6 +11,28 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+var logFile *os.File
+
+func initLogging() {
+    var err error
+    logFile, err = os.OpenFile("bot.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        log.Fatal("Ошибка создания лог-файла:", err)
+    }
+    log.SetOutput(logFile)
+    log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+}
+
+// Функция для логирования запросов к бэкенду
+func logBackendRequest(endpoint string, payload interface{}, response interface{}, err error) {
+    log.Printf("📤 Запрос к %s: %+v", endpoint, payload)
+    if err != nil {
+        log.Printf("❌ Ошибка: %v", err)
+    } else {
+        log.Printf("📥 Ответ: %+v", response)
+    }
+}
+
 // Конфигурация
 const (
 	TELEGRAM_BOT_TOKEN = "8341440596:AAG6sTQLcOqvGMdNu3EN7bTbvKnj3FSIBjY"
@@ -134,42 +156,47 @@ _ready?) поехали👇_`, orderID)
 }
 
 func createBackendSession(telegramID int64, telegramName string) (string, string, error) {
-	// Создаем запрос к бэкенду для создания сессии
-	payload := map[string]interface{}{
-		"telegramUserId":   fmt.Sprintf("%d", telegramID),
-		"telegramUsername": telegramName,
-	}
+    payload := map[string]interface{}{
+        "telegramUserId":   fmt.Sprintf("%d", telegramID),
+        "telegramUsername": telegramName,
+    }
 
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return "", "", err
-	}
+    jsonData, err := json.Marshal(payload)
+    if err != nil {
+        return "", "", err
+    }
 
-	resp, err := http.Post(BACKEND_URL+"/api/create-session", "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
+    log.Printf("📤 Создание сессии для пользователя %d (%s)", telegramID, telegramName)
+    
+    resp, err := http.Post(BACKEND_URL+"/api/create-session", "application/json", bytes.NewBuffer(jsonData))
+    if err != nil {
+        log.Printf("❌ Ошибка создания сессии: %v", err)
+        return "", "", err
+    }
+    defer resp.Body.Close()
 
-	var result struct {
-		Success   bool   `json:"success"`
-		Token     string `json:"token"`
-		SessionID int    `json:"sessionId"`
-		ShareURL  string `json:"shareUrl"`
-	}
+    var result struct {
+        Success   bool   `json:"success"`
+        Token     string `json:"token"`
+        SessionID int    `json:"sessionId"`
+        ShareURL  string `json:"shareUrl"`
+    }
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", "", err
-	}
+    if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+        return "", "", err
+    }
 
-	if !result.Success {
-		return "", "", fmt.Errorf("backend error")
-	}
+    log.Printf("✅ Сессия создана: Token=%s, SessionID=%d", result.Token, result.SessionID)
 
-	// Генерируем короткий ID заказа
-	orderID := fmt.Sprintf("ORD-%d", time.Now().Unix()%10000)
+    if !result.Success {
+        return "", "", fmt.Errorf("backend error")
+    }
 
-	return result.Token, orderID, nil
+    orderID := fmt.Sprintf("ORD-%d", time.Now().Unix()%10000)
+    
+    log.Printf("🔗 Ссылка для пользователя: %s", result.ShareURL)
+    
+    return result.Token, orderID, nil
 }
 
 func sendHelp(bot *tgbotapi.BotAPI, chatID int64) {
@@ -535,7 +562,7 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
         Scores:       s.Scores,
         AIPrompt:     aiPrompt,
         SessionToken: s.SessionID,
-        Answers:      answers, // Добавляем answers
+        Answers:      answers,
     }
 
     jsonData, err := json.Marshal(payload)
@@ -543,13 +570,32 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
         return err
     }
 
+    log.Printf("📤 Отправка результатов теста для сессии %s", s.SessionID)
+    log.Printf("📊 Профиль: color=%s, form=%s, mood=%s", profile["color"], profile["form"], profile["mood"])
+    
     resp, err := http.Post(BACKEND_URL+"/api/save-test-results", "application/json", bytes.NewBuffer(jsonData))
     if err != nil {
+        log.Printf("❌ Ошибка отправки результатов: %v", err)
         return err
     }
     defer resp.Body.Close()
 
-    // Проверяем статус ответа
+    var response struct {
+        Success   bool   `json:"success"`
+        Message   string `json:"message"`
+        RequestID string `json:"requestId"`
+    }
+    
+    if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+        return err
+    }
+
+    if response.Success {
+        log.Printf("✅ Результаты успешно сохранены! RequestID: %s", response.RequestID)
+    } else {
+        log.Printf("⚠️ Сервер вернул ошибку: %s", response.Message)
+    }
+
     if resp.StatusCode != http.StatusOK {
         return fmt.Errorf("backend вернул статус: %s", resp.Status)
     }
