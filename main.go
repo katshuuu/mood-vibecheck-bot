@@ -646,3 +646,27 @@ func send(bot *tgbotapi.BotAPI, chatID int64, text string) {
 		log.Printf("Ошибка отправки сообщения: %v", err)
 	}
 }
+func saveResultsToBackend(chatID int64, s *TestSession, profile map[string]string, aiPrompt string) error {
+    payload := ResultPayload{
+        TelegramID:   chatID,
+        TelegramName: fmt.Sprintf("%d", chatID), // Или имя пользователя
+        Profile:      profile,
+        Scores:       s.Scores,
+        AIPrompt:     aiPrompt,
+        SessionToken: s.SessionID, // Важно: отправляем session_token
+    }
+
+    jsonData, err := json.Marshal(payload)
+    if err != nil {
+        return err
+    }
+
+    // Используем правильный эндпоинт
+    resp, err := http.Post(BACKEND_URL+"/api/save-test-results", "application/json", bytes.NewBuffer(jsonData))
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
+
+    return nil
+}
