@@ -464,7 +464,7 @@ func applyAnswer(s *TestSession, a string) {
 	}
 }
 
-func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession) {
+func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbotapi.User) {
 	// Определяем максимальные категории
 	color := maxCategory(s.Scores, []string{"P", "B", "D", "N"})
 	form := maxCategory(s.Scores, []string{"R", "A", "C", "M"})
@@ -481,11 +481,10 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession) {
 	aiPrompt := generateAIPrompt(profile)
 
 	// Сохраняем результаты в базу данных
-	err := saveResultsToBackend(chatID, s, profile, aiPrompt)
-	if err != nil {
-		log.Printf("Ошибка сохранения результатов: %v", err)
-	}
-
+    err := saveResultsToBackend(chatID, user.UserName, s, profile, aiPrompt, nil) // Добавьте answers если есть
+    if err != nil {
+        log.Printf("Ошибка сохранения результатов: %v", err)
+    }
 	// Отправляем ссылку на браузерный чат
 	shareURL := fmt.Sprintf("%s/quiz/%s", SITE_URL, s.SessionID)
 	chatLink := fmt.Sprintf("%s/chat/%s", SITE_URL, s.SessionID)
@@ -528,27 +527,34 @@ _Там вы сможете посмотреть генерацию и офор�
 	bot.Send(promptMsg)
 }
 
-func saveResultsToBackend(chatID int64, s *TestSession, profile map[string]string, aiPrompt string) error {
-	payload := ResultPayload{
-		TelegramID:   chatID,
-		Profile:      profile,
-		Scores:       s.Scores,
-		AIPrompt:     aiPrompt,
-		SessionToken: s.SessionID,
-	}
+func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, profile map[string]string, aiPrompt string, answers map[string]string) error {
+    payload := ResultPayload{
+        TelegramID:   chatID,
+        TelegramName: telegramName,
+        Profile:      profile,
+        Scores:       s.Scores,
+        AIPrompt:     aiPrompt,
+        SessionToken: s.SessionID,
+        Answers:      answers, // Добавляем answers
+    }
 
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
+    jsonData, err := json.Marshal(payload)
+    if err != nil {
+        return err
+    }
 
-	resp, err := http.Post(BACKEND_URL+"/api/save-test-results", "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+    resp, err := http.Post(BACKEND_URL+"/api/save-test-results", "application/json", bytes.NewBuffer(jsonData))
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
 
-	return nil
+    // Проверяем статус ответа
+    if resp.StatusCode != http.StatusOK {
+        return fmt.Errorf("backend вернул статус: %s", resp.Status)
+    }
+
+    return nil
 }
 
 func generateAIPrompt(profile map[string]string) string {
@@ -645,28 +651,4 @@ func send(bot *tgbotapi.BotAPI, chatID int64, text string) {
 	if _, err := bot.Send(msg); err != nil {
 		log.Printf("Ошибка отправки сообщения: %v", err)
 	}
-}
-func saveResultsToBackend(chatID int64, s *TestSession, profile map[string]string, aiPrompt string) error {
-    payload := ResultPayload{
-        TelegramID:   chatID,
-        TelegramName: fmt.Sprintf("%d", chatID), // Или имя пользователя
-        Profile:      profile,
-        Scores:       s.Scores,
-        AIPrompt:     aiPrompt,
-        SessionToken: s.SessionID, // Важно: отправляем session_token
-    }
-
-    jsonData, err := json.Marshal(payload)
-    if err != nil {
-        return err
-    }
-
-    // Используем правильный эндпоинт
-    resp, err := http.Post(BACKEND_URL+"/api/save-test-results", "application/json", bytes.NewBuffer(jsonData))
-    if err != nil {
-        return err
-    }
-    defer resp.Body.Close()
-
-    return nil
 }
