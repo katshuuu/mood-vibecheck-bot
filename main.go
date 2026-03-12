@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io" // <-- ДОБАВЬТЕ ЭТУ СТРОКУ
 	"log"
 	"net/http"
 	"os"
@@ -364,71 +365,43 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 
 func startTest(bot *tgbotapi.BotAPI, chatID int64, user *tgbotapi.User, tokenFromURL string) {
 	var sessionToken string
-	var orderID string
-	var err error
 
 	if tokenFromURL != "" {
-		// Используем токен из URL
+		// ✅ ИСПОЛЬЗУЕМ ТОКЕН ИЗ ССЫЛКИ
 		sessionToken = tokenFromURL
-
-		// Проверяем, существует ли такая сессия на бэкенде
-		exists, err := checkSessionExists(tokenFromURL)
-		if err != nil {
-			log.Printf("⚠️ Ошибка проверки сессии: %v", err)
-		}
-
-		if exists {
-			log.Printf("✅ Используем существующую сессию с токеном: %s", tokenFromURL)
-			orderID = fmt.Sprintf("ORD-%d", time.Now().Unix()%10000)
-		} else {
-			// Если сессия не найдена, создаем новую
-			sessionToken, orderID, err = createBackendSession(user.ID, user.UserName)
-			if err != nil {
-				log.Printf("⚠️ Не удалось создать сессию: %v", err)
-				sessionToken = fmt.Sprintf("local_%d_%d", user.ID, time.Now().Unix())
-				orderID = fmt.Sprintf("LOCAL-%d", time.Now().Unix()%10000)
-			}
-		}
+		log.Printf("✅ Используем токен из ссылки: %s", sessionToken)
 	} else {
-		// Нет токена - создаем новую сессию
-		sessionToken, orderID, err = createBackendSession(user.ID, user.UserName)
-		if err != nil {
-			log.Printf("⚠️ Не удалось создать сессию: %v", err)
-			sessionToken = fmt.Sprintf("local_%d_%d", user.ID, time.Now().Unix())
-			orderID = fmt.Sprintf("LOCAL-%d", time.Now().Unix()%10000)
-		}
+		// ❌ Если нет токена - это ошибка! Не создаем локальную сессию
+		log.Printf("❌ ОШИБКА: Нет токена в команде /start")
+		msg := tgbotapi.NewMessage(chatID, "❌ Ошибка: неверная ссылка. Начните тест с сайта.")
+		bot.Send(msg)
+		return
 	}
 
-	// Инициализируем локальную сессию с ПОЛУЧЕННЫМ токеном
+	// Инициализируем сессию с токеном из ссылки
 	sessionsMutex.Lock()
 	sessions[chatID] = &TestSession{
 		Step:      1,
 		Scores:    initScores(),
-		SessionID: sessionToken, // ← Важно! Используем правильный токен
-		OrderID:   orderID,
+		SessionID: sessionToken,
+		OrderID:   fmt.Sprintf("TEST-%d", time.Now().Unix()%10000),
 		CreatedAt: time.Now(),
 	}
 	sessionsMutex.Unlock()
 
-	// ... остальной код
+	log.Printf("📝 Новая сессия создана для пользователя %d, токен: %s",
+		user.ID, sessionToken)
 
-	log.Printf("📝 Новая сессия создана для пользователя %d (%s), OrderID: %s",
-		user.ID, user.UserName, orderID)
-
-	// Приветственное сообщение с ID заказа
+	// Приветственное сообщение
 	welcomeMsg := fmt.Sprintf(`✨ *you're the best,* пройди наш тест🫧
 
 ответь на небольшие вопросы быстро, за 2 минуты
 
-🆔 *ID заказа:* #%s
-
-_ready?) поехали👇_`, orderID)
+_ready?) поехали👇_`, sessionToken[len(sessionToken)-8:])
 
 	msg := tgbotapi.NewMessage(chatID, welcomeMsg)
 	msg.ParseMode = "Markdown"
-	if _, err := bot.Send(msg); err != nil {
-		log.Printf("❌ Ошибка отправки приветствия: %v", err)
-	}
+	bot.Send(msg)
 
 	// Отправляем первый вопрос
 	sendQuestion(bot, chatID, 1)
@@ -816,13 +789,11 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 	}
 
 	// Просто благодарим пользователя, НИКАКИХ ССЫЛОК
-	resultText := fmt.Sprintf(`✨ *Спасибо за прохождение теста!* ✨
+	resultText := fmt.Sprintf(`✨ _Спасибо за прохождение теста!_ ✨
 
 🌺 *Ваш тип личности:* %s
 🎨 *Цветовая гамма:* %s
-
-_Ваши ответы отправлены в лабораторию для анализа._
-_Результаты появятся в чате на сайте, откуда вы перешли._`,
+_`,
 		getMoodName(mood),
 		getColorName(color))
 
@@ -838,6 +809,12 @@ _Результаты появятся в чате на сайте, откуда
 }
 
 func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, profile map[string]string, aiPrompt string, answers map[string]string) error {
+	// Проверяем, что это не локальная сессия
+	if strings.HasPrefix(s.SessionID, "local_") {
+		log.Printf("⚠️ Локальная сессия, не отправляем на бэкенд: %s", s.SessionID)
+		return nil
+	}
+
 	payload := ResultPayload{
 		TelegramID:   chatID,
 		TelegramName: telegramName,
@@ -853,14 +830,19 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
 		return err
 	}
 
-	log.Printf("📤 Отправка результатов теста для сессии %s", s.SessionID)
+	url := backendURL + "/api/save-test-results"
+	log.Printf("📤 Отправка результатов на %s для сессии %s", url, s.SessionID)
 
-	resp, err := httpClient.Post(backendURL+"/api/save-test-results", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		log.Printf("❌ Ошибка отправки результатов: %v", err)
+		log.Printf("❌ Ошибка отправки: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
+
+	// Читаем ответ для отладки
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("📥 Ответ от сервера: %s", string(body))
 
 	var response struct {
 		Success   bool   `json:"success"`
@@ -868,18 +850,15 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
 		RequestID string `json:"requestId"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	if err := json.Unmarshal(body, &response); err != nil {
+		log.Printf("❌ Ошибка парсинга ответа: %v, тело: %s", err, string(body))
 		return err
 	}
 
 	if response.Success {
-		log.Printf("✅ Результаты успешно сохранены! RequestID: %s", response.RequestID)
+		log.Printf("✅ Результаты сохранены! RequestID: %s", response.RequestID)
 	} else {
 		log.Printf("⚠️ Сервер вернул ошибку: %s", response.Message)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("backend вернул статус: %s", resp.Status)
 	}
 
 	return nil
