@@ -845,14 +845,11 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
 		return nil
 	}
 
-	// Преобразуем scores в формат для сохранения в БД
-	// Сервер ожидает определенные поля в profile
-
-	// Подготовка payload для server.js
+	// Подготавливаем данные в формате, который ожидает сервер
 	payload := map[string]interface{}{
 		"telegram_id":   chatID,
 		"telegram_name": telegramName,
-		"profile":       profile, // Это будет использовано для полей occasion, recipient_person_type и т.д.
+		"profile":       profile, // сервер ожидает profile с полями color, form, mood
 		"scores":        s.Scores,
 		"ai_prompt":     aiPrompt,
 		"session_token": s.SessionID,
@@ -866,7 +863,7 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
 
 	url := backendURL + "/api/save-test-results"
 	log.Printf("📤 Отправка результатов на %s для сессии %s", url, s.SessionID)
-	log.Printf("📦 Полезная нагрузка: %s", string(jsonData))
+	log.Printf("📤 Данные: %s", string(jsonData))
 
 	resp, err := httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -883,6 +880,7 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
 		Success   bool   `json:"success"`
 		Message   string `json:"message"`
 		RequestID string `json:"requestId"`
+		Error     string `json:"error"`
 	}
 
 	if err := json.Unmarshal(body, &response); err != nil {
@@ -892,11 +890,11 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
 
 	if response.Success {
 		log.Printf("✅ Результаты сохранены! RequestID: %s", response.RequestID)
+		return nil
 	} else {
-		log.Printf("⚠️ Сервер вернул ошибку: %s", response.Message)
+		log.Printf("⚠️ Сервер вернул ошибку: %s", response.Error)
+		return fmt.Errorf("server error: %s", response.Error)
 	}
-
-	return nil
 }
 
 func generateAIPrompt(profile map[string]string) string {
