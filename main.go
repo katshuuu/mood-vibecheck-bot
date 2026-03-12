@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io" // <-- ДОБАВЬТЕ ЭТУ СТРОКУ
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -39,6 +39,7 @@ type TestSession struct {
 	SessionID string
 	OrderID   string
 	CreatedAt time.Time
+	Answers   map[string]string // Сохраняем сырые ответы
 }
 
 type ResultPayload struct {
@@ -80,22 +81,6 @@ func initLogging() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 }
 
-func checkBackendHealth() bool {
-	resp, err := httpClient.Get(backendURL + "/health")
-	if err != nil {
-		log.Printf("⚠️ Бэкенд недоступен: %v", err)
-		return false
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusOK {
-		log.Println("✅ Бэкенд доступен")
-		return true
-	}
-	log.Printf("⚠️ Бэкенд вернул статус: %s", resp.Status)
-	return false
-}
-
 func main() {
 	// Инициализация логирования
 	initLogging()
@@ -135,12 +120,6 @@ func main() {
 	log.Printf("🌍 Site URL: %s", siteURL)
 	log.Printf("🔧 Debug mode: %v", debug)
 
-	// Проверка бэкенда в фоне
-	go func() {
-		time.Sleep(2 * time.Second) // Даем время на запуск
-		checkBackendHealth()
-	}()
-
 	// Запускаем HTTP сервер для проверки
 	go startHTTPServer(bot, port)
 
@@ -161,7 +140,7 @@ func main() {
 	for update := range updates {
 		if update.Message != nil {
 			// Защита от спама - игнорируем старые сообщения
-			if update.Message.Time().Before(time.Now().Add(-10 * time.Second)) {
+			if update.Message.Time().Before(time.Now().Add(-60 * time.Second)) {
 				continue
 			}
 
@@ -224,7 +203,6 @@ func startHTTPServer(bot *tgbotapi.BotAPI, port string) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 
-		// Разделяем HTML и форматирование
 		html := `<!DOCTYPE html>
 <html>
 <head>
@@ -342,7 +320,7 @@ func startHTTPServer(bot *tgbotapi.BotAPI, port string) {
 
 func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	chatID := message.Chat.ID
-	commandText := message.Text // Например: "/start TOKEN_123"
+	commandText := message.Text
 
 	// Разбираем команду
 	parts := strings.Split(commandText, " ")
@@ -350,12 +328,12 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 
 	var token string
 	if len(parts) > 1 {
-		token = parts[1] // Получаем токен из команды
+		token = parts[1]
 	}
 
 	switch command {
 	case "start":
-		startTest(bot, chatID, message.From, token) // ← Передаем токен!
+		startTest(bot, chatID, message.From, token)
 	case "help":
 		sendHelp(bot, chatID)
 	default:
@@ -371,15 +349,30 @@ func startTest(bot *tgbotapi.BotAPI, chatID int64, user *tgbotapi.User, tokenFro
 		return
 	}
 
-	// Токен из ссылки ДОЛЖЕН быть тем же UUID, что создал сервер
+	// Проверяем, существует ли сессия на бэкенде
+	exists, err := checkSessionExists(tokenFromURL)
+	if err != nil {
+		log.Printf("⚠️ Ошибка проверки сессии: %v", err)
+	}
+
+	if !exists {
+		// Если сессия не существует, создаем её
+		log.Printf("📝 Сессия %s не найдена, создаем на бэкенде", tokenFromURL)
+		_, _, err := createBackendSessionWithToken(user.ID, user.UserName, tokenFromURL)
+		if err != nil {
+			log.Printf("❌ Ошибка создания сессии на бэкенде: %v", err)
+		}
+	}
+
 	sessionToken := tokenFromURL
 
 	sessionsMutex.Lock()
 	sessions[chatID] = &TestSession{
 		Step:      1,
 		Scores:    initScores(),
-		SessionID: sessionToken, // Сохраняем ТОТ ЖЕ токен
+		SessionID: sessionToken,
 		CreatedAt: time.Now(),
+		Answers:   make(map[string]string),
 	}
 	sessionsMutex.Unlock()
 
@@ -395,10 +388,11 @@ func startTest(bot *tgbotapi.BotAPI, chatID int64, user *tgbotapi.User, tokenFro
 	sendQuestion(bot, chatID, 1)
 }
 
-func createBackendSession(telegramID int64, telegramName string) (string, string, error) {
+func createBackendSessionWithToken(telegramID int64, telegramName string, token string) (string, string, error) {
 	payload := map[string]interface{}{
 		"telegramUserId":   fmt.Sprintf("%d", telegramID),
 		"telegramUsername": telegramName,
+		"token":            token,
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -406,10 +400,9 @@ func createBackendSession(telegramID int64, telegramName string) (string, string
 		return "", "", err
 	}
 
-	log.Printf("📤 Создание сессии для пользователя %d (%s)", telegramID, telegramName)
+	log.Printf("📤 Создание сессии с токеном %s для пользователя %d", token, telegramID)
 
-	// Используем backendURL из переменных окружения
-	resp, err := httpClient.Post(backendURL+"/api/create-session", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := httpClient.Post(backendURL+"/api/create-session-with-token", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Printf("❌ Ошибка создания сессии: %v", err)
 		return "", "", err
@@ -431,11 +424,7 @@ func createBackendSession(telegramID int64, telegramName string) (string, string
 		return "", "", fmt.Errorf("backend вернул success=false")
 	}
 
-	log.Printf("✅ Сессия создана: Token=%s, SessionID=%d", result.Token, result.SessionID)
-	log.Printf("🔗 Ссылка для пользователя: %s", result.ShareURL)
-
-	orderID := fmt.Sprintf("ORD-%d", time.Now().Unix()%10000)
-	return result.Token, orderID, nil
+	return result.Token, fmt.Sprintf("ORD-%d", time.Now().Unix()%10000), nil
 }
 
 func sendHelp(bot *tgbotapi.BotAPI, chatID int64) {
@@ -450,8 +439,7 @@ func sendHelp(bot *tgbotapi.BotAPI, chatID int64) {
 *Как это работает:*
 1. Ответьте на 7 простых вопросов
 2. Получите ваш уникальный профиль
-3. Перейдите по ссылке для просмотра букета
-4. Пообщайтесь с AI-ассистентом`
+3. Перейдите по ссылке для просмотра букета`
 
 	msg := tgbotapi.NewMessage(chatID, helpText)
 	msg.ParseMode = "Markdown"
@@ -482,55 +470,45 @@ func handleAnswer(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	answerText := message.Text
 	user := message.From
 
-	log.Printf("🔍 [ШАГ 1] ПОЛУЧЕН ОТВЕТ: chatID=%d, text='%s', from=%s", chatID, answerText, user.UserName)
+	log.Printf("🔍 ПОЛУЧЕН ОТВЕТ: chatID=%d, text='%s'", chatID, answerText)
 
 	sessionsMutex.RLock()
 	session := sessions[chatID]
 	sessionsMutex.RUnlock()
 
 	if session == nil {
-		log.Printf("⚠️ [ОШИБКА] Сессия не найдена для чата %d", chatID)
+		log.Printf("⚠️ Сессия не найдена для чата %d", chatID)
 		msg := tgbotapi.NewMessage(chatID, "❌ Сессия не найдена. Начните тест заново с помощью /start")
 		bot.Send(msg)
 		return
 	}
 
-	log.Printf("🔍 [ШАГ 2] Текущий шаг сессии: %d, токен: %s", session.Step, session.SessionID)
-
 	// Преобразуем текст ответа в код
 	answerCode := textToCode(session.Step, answerText)
-	log.Printf("🔍 [ШАГ 3] Преобразование ответа: текст='%s' -> код='%s'", answerText, answerCode)
-
 	if answerCode == "" {
-		log.Printf("⚠️ [ОШИБКА] Неизвестный ответ на шаге %d: %s", session.Step, answerText)
+		log.Printf("⚠️ Неизвестный ответ на шаге %d: %s", session.Step, answerText)
 		msg := tgbotapi.NewMessage(chatID, "❌ Пожалуйста, выберите один из предложенных вариантов, нажав на кнопку с ответом.")
 		bot.Send(msg)
 		return
 	}
 
-	log.Printf("📊 [ШАГ 4] Пользователь %d ответил на вопрос %d: %s -> %s",
-		user.ID, session.Step, answerText, answerCode)
+	log.Printf("📊 Пользователь %d ответил на вопрос %d: %s -> %s", user.ID, session.Step, answerText, answerCode)
 
 	// Сохраняем ответ
+	session.Answers[fmt.Sprintf("q%d", session.Step)] = answerCode
 	applyAnswer(session, answerCode)
-	log.Printf("🔍 [ШАГ 5] Ответ применен. Текущие scores: %+v", session.Scores)
 
 	session.Step++
-	log.Printf("🔍 [ШАГ 6] Шаг увеличен: теперь %d", session.Step)
 
 	if session.Step > 7 {
-		log.Printf("🏁 [ШАГ 7] ТЕСТ ЗАВЕРШЕН! Вызов finishTest для пользователя %d", user.ID)
 		finishTest(bot, chatID, session, user)
 
-		log.Printf("🔍 [ШАГ 8] Удаление сессии для chatID %d", chatID)
 		sessionsMutex.Lock()
 		delete(sessions, chatID)
 		sessionsMutex.Unlock()
-		log.Printf("🔍 [ШАГ 9] Сессия удалена")
 		return
 	}
 
-	log.Printf("🔍 [ШАГ 10] Отправка следующего вопроса, шаг %d", session.Step)
 	sendQuestion(bot, chatID, session.Step)
 }
 
@@ -660,7 +638,7 @@ func sendQuestion(bot *tgbotapi.BotAPI, chatID int64, step int) {
 		log.Printf("❌ Ошибка отправки вопроса: %v", err)
 	}
 
-	// Пытаемся отправить фото, но не критично если их нет
+	// Пытаемся отправить фото
 	var mediaGroup []interface{}
 	photosExist := false
 
@@ -670,7 +648,7 @@ func sendQuestion(bot *tgbotapi.BotAPI, chatID int64, step int) {
 			mediaGroup = append(mediaGroup, photo)
 			photosExist = true
 		} else {
-			log.Printf("📷 Фото не найдено: %s, продолжаем без него", path)
+			log.Printf("📷 Фото не найдено: %s", path)
 		}
 	}
 
@@ -781,14 +759,14 @@ func applyAnswer(s *TestSession, a string) {
 }
 
 func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbotapi.User) {
-	log.Printf("🏁 [FINISH 1] Начало finishTest для пользователя %d, токен: %s", user.ID, s.SessionID)
+	log.Printf("🏁 Завершение теста для пользователя %d, токен: %s", user.ID, s.SessionID)
 
 	// Определяем профиль
 	color := maxCategory(s.Scores, []string{"P", "B", "D", "N"})
 	form := maxCategory(s.Scores, []string{"R", "A", "C", "M"})
 	mood := maxCategory(s.Scores, []string{"M1", "M2", "M3", "M4"})
 
-	log.Printf("🏁 [FINISH 2] Результаты: color=%s, form=%s, mood=%s", color, form, mood)
+	log.Printf("📊 Результаты: color=%s, form=%s, mood=%s", color, form, mood)
 
 	profile := map[string]string{
 		"color": color,
@@ -797,63 +775,59 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 	}
 
 	aiPrompt := generateAIPrompt(profile)
-	log.Printf("🏁 [FINISH 3] AI Prompt сгенерирован: %s", aiPrompt)
+	log.Printf("📝 AI Prompt сгенерирован")
 
 	// Отправляем результаты на сервер
-	log.Printf("🏁 [FINISH 4] Отправка результатов на бэкенд...")
-	err := saveResultsToBackend(chatID, user.UserName, s, profile, aiPrompt, nil)
+	err := saveResultsToBackend(user.ID, user.UserName, s, profile, aiPrompt, s.Answers)
 	if err != nil {
-		log.Printf("❌ [FINISH ERROR] Ошибка сохранения результатов: %v", err)
-	} else {
-		log.Printf("✅ [FINISH 5] Результаты успешно отправлены на бэкенд")
+		log.Printf("❌ Ошибка сохранения результатов: %v", err)
+		// Отправляем сообщение об ошибке пользователю
+		errorMsg := tgbotapi.NewMessage(chatID, "❌ Произошла ошибка при сохранении результатов. Пожалуйста, попробуйте позже.")
+		bot.Send(errorMsg)
+		return
 	}
 
 	// Сообщение пользователю
-	resultText := fmt.Sprintf(`✨ _Спасибо за прохождение теста!_ ✨
+	resultText := fmt.Sprintf(`✨ *Спасибо за прохождение теста!* ✨
 
 🌺 *Ваш тип личности:* %s
 🎨 *Цветовая гамма:* %s
 
-🔗 *Ваш букет готовится!*
+🔗 *Ваш уникальный букет уже готовится!*
 Перейдите по ссылке через 1-2 минуты:
-%s/quiz/%s`,
+%s/quiz/%s
+
+Там вы сможете увидеть сгенерированный специально для вас букет!`,
 		getMoodName(mood),
 		getColorName(color),
 		siteURL,
 		s.SessionID)
-
-	log.Printf("🏁 [FINISH 6] Отправка сообщения пользователю: %s", resultText)
 
 	msg := tgbotapi.NewMessage(chatID, resultText)
 	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
 
 	if _, err := bot.Send(msg); err != nil {
-		log.Printf("❌ [FINISH ERROR] Ошибка отправки результата пользователю: %v", err)
+		log.Printf("❌ Ошибка отправки результата пользователю: %v", err)
 	} else {
-		log.Printf("✅ [FINISH 7] Сообщение успешно отправлено пользователю")
+		log.Printf("✅ Тест успешно завершен для пользователя %d", user.ID)
 	}
-
-	log.Printf("✅ [FINISH 8] Тест полностью завершен для пользователя %d, токен: %s", user.ID, s.SessionID)
 }
 
-// Новая функция для отправки результатов
 func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, profile map[string]string, aiPrompt string, answers map[string]string) error {
-	// Проверяем, что это не локальная сессия
-	if strings.HasPrefix(s.SessionID, "local_") {
-		log.Printf("⚠️ Локальная сессия, не отправляем на бэкенд: %s", s.SessionID)
-		return nil
+	if s.SessionID == "" {
+		return fmt.Errorf("empty session token")
 	}
 
-	// Подготавливаем данные в формате, который ожидает сервер
-	payload := map[string]interface{}{
-		"telegram_id":   chatID,
-		"telegram_name": telegramName,
-		"profile":       profile, // сервер ожидает profile с полями color, form, mood
-		"scores":        s.Scores,
-		"ai_prompt":     aiPrompt,
-		"session_token": s.SessionID,
-		"answers":       answers,
+	// Подготавливаем данные
+	payload := ResultPayload{
+		TelegramID:   chatID,
+		TelegramName: telegramName,
+		Profile:      profile,
+		Scores:       s.Scores,
+		AIPrompt:     aiPrompt,
+		SessionToken: s.SessionID,
+		Answers:      answers,
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -863,45 +837,37 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
 
 	url := backendURL + "/api/save-test-results"
 	log.Printf("📤 Отправка результатов на %s для сессии %s", url, s.SessionID)
-	log.Printf("📤 Данные: %s", string(jsonData))
 
 	resp, err := httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		log.Printf("❌ Ошибка отправки: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
 
-	// Читаем ответ для отладки
 	body, _ := io.ReadAll(resp.Body)
 	log.Printf("📥 Ответ от сервера: %s", string(body))
 
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+
 	var response struct {
-		Success   bool   `json:"success"`
-		Message   string `json:"message"`
-		RequestID string `json:"requestId"`
-		Error     string `json:"error"`
+		Success bool `json:"success"`
 	}
 
 	if err := json.Unmarshal(body, &response); err != nil {
-		log.Printf("❌ Ошибка парсинга ответа: %v, тело: %s", err, string(body))
 		return err
 	}
 
-	if response.Success {
-		log.Printf("✅ Результаты сохранены! RequestID: %s", response.RequestID)
-		return nil
-	} else {
-		log.Printf("⚠️ Сервер вернул ошибку: %s", response.Error)
-		return fmt.Errorf("server error: %s", response.Error)
+	if !response.Success {
+		return fmt.Errorf("server returned success=false")
 	}
+
+	log.Printf("✅ Результаты успешно сохранены на сервере")
+	return nil
 }
 
 func generateAIPrompt(profile map[string]string) string {
-	if profile == nil {
-		profile = make(map[string]string)
-	}
-
 	colorMap := map[string]string{
 		"P": "pastel pink and soft peach tones with romantic delicate flowers",
 		"B": "bright coral, yellow and turquoise tones with exotic dynamic flowers",
@@ -936,17 +902,6 @@ func generateAIPrompt(profile map[string]string) string {
 	)
 }
 
-// Вспомогательная функция для безопасного доступа к map
-func safeGetMap(m map[string]string, key, defaultValue string) string {
-	if key == "" {
-		return defaultValue
-	}
-	if val, ok := m[key]; ok {
-		return val
-	}
-	return defaultValue
-}
-
 func maxCategory(scores map[string]float64, keys []string) string {
 	maxVal := -1.0
 	maxKey := keys[0]
@@ -971,32 +926,12 @@ func getColorName(code string) string {
 	return names[code]
 }
 
-func getFormName(code string) string {
-	names := map[string]string{
-		"R": "Классическая гармония",
-		"A": "Современный динамизм",
-		"C": "Плавная текучесть",
-		"M": "Минималистичная ясность",
-	}
-	return names[code]
-}
-
 func getMoodName(code string) string {
 	names := map[string]string{
 		"M1": "Романтик",
 		"M2": "Оптимист",
 		"M3": "Интеллектуал",
 		"M4": "Философ",
-	}
-	return names[code]
-}
-
-func getFlowerName(code string) string {
-	names := map[string]string{
-		"F1": "Нежность",
-		"F2": "Страсть",
-		"F3": "Загадка",
-		"F4": "Спокойствие",
 	}
 	return names[code]
 }
