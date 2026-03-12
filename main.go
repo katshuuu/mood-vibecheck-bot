@@ -780,8 +780,8 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 
 	aiPrompt := generateAIPrompt(profile)
 
-	// Отправляем результаты на сервер
-	err := saveTestResultsToBackend(chatID, user.UserName, s, profile, aiPrompt)
+	// Отправляем результаты на сервер - ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩУЮ ФУНКЦИЮ
+	err := saveResultsToBackend(chatID, user.UserName, s, profile, aiPrompt, nil)
 	if err != nil {
 		log.Printf("❌ Ошибка сохранения результатов: %v", err)
 	}
@@ -792,31 +792,41 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 🌺 *Ваш тип личности:* %s
 🎨 *Цветовая гамма:* %s
 
-🔗 Перейдите по ссылке через 1-2 минуты:
+🔗 *Ваш букет готовится!*
+Перейдите по ссылке через 1-2 минуты:
 %s/quiz/%s`,
 		getMoodName(mood),
 		getColorName(color),
 		siteURL,
-		s.SessionID) // Здесь должен быть токен из ссылки!
+		s.SessionID)
 
 	msg := tgbotapi.NewMessage(chatID, resultText)
 	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
-	bot.Send(msg)
+
+	if _, err := bot.Send(msg); err != nil {
+		log.Printf("❌ Ошибка отправки результата: %v", err)
+	}
 
 	log.Printf("✅ Тест завершен для пользователя %d, токен: %s", user.ID, s.SessionID)
 }
 
 // Новая функция для отправки результатов
-func saveTestResultsToBackend(telegramID int64, telegramName string, s *TestSession, profile map[string]string, aiPrompt string) error {
-	payload := map[string]interface{}{
-		"telegram_id":   telegramID,
-		"telegram_name": telegramName,
-		"profile":       profile,
-		"scores":        s.Scores,
-		"ai_prompt":     aiPrompt,
-		"session_token": s.SessionID, // Важно: это должен быть тот же токен, что в ссылке
-		"answers":       nil,
+func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, profile map[string]string, aiPrompt string, answers map[string]string) error {
+	// Проверяем, что это не локальная сессия
+	if strings.HasPrefix(s.SessionID, "local_") {
+		log.Printf("⚠️ Локальная сессия, не отправляем на бэкенд: %s", s.SessionID)
+		return nil
+	}
+
+	payload := ResultPayload{
+		TelegramID:   chatID,
+		TelegramName: telegramName,
+		Profile:      profile,
+		Scores:       s.Scores,
+		AIPrompt:     aiPrompt,
+		SessionToken: s.SessionID, // ВАЖНО: это должен быть UUID из ссылки
+		Answers:      answers,
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -824,18 +834,37 @@ func saveTestResultsToBackend(telegramID int64, telegramName string, s *TestSess
 		return err
 	}
 
-	// Отправляем на правильный endpoint
 	url := backendURL + "/api/save-test-results"
 	log.Printf("📤 Отправка результатов на %s для сессии %s", url, s.SessionID)
+	log.Printf("📦 Полезная нагрузка: %s", string(jsonData))
 
 	resp, err := httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
+		log.Printf("❌ Ошибка отправки: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
 
+	// Читаем ответ для отладки
 	body, _ := io.ReadAll(resp.Body)
-	log.Printf("📥 Ответ сервера: %s", string(body))
+	log.Printf("📥 Ответ от сервера: %s", string(body))
+
+	var response struct {
+		Success   bool   `json:"success"`
+		Message   string `json:"message"`
+		RequestID string `json:"requestId"`
+	}
+
+	if err := json.Unmarshal(body, &response); err != nil {
+		log.Printf("❌ Ошибка парсинга ответа: %v, тело: %s", err, string(body))
+		return err
+	}
+
+	if response.Success {
+		log.Printf("✅ Результаты сохранены! RequestID: %s", response.RequestID)
+	} else {
+		log.Printf("⚠️ Сервер вернул ошибку: %s", response.Message)
+	}
 
 	return nil
 }
