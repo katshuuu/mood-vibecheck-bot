@@ -397,7 +397,7 @@ func startTest(bot *tgbotapi.BotAPI, chatID int64, user *tgbotapi.User, tokenFro
 
 ответь на небольшие вопросы быстро, за 2 минуты
 
-_ready?) поехали👇_`, sessionToken[len(sessionToken)-8:])
+_ready?) поехали👇_`)
 
 	msg := tgbotapi.NewMessage(chatID, welcomeMsg)
 	msg.ParseMode = "Markdown"
@@ -773,10 +773,12 @@ func applyAnswer(s *TestSession, a string) {
 func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbotapi.User) {
 	// Определяем профиль
 	color := maxCategory(s.Scores, []string{"P", "B", "D", "N"})
+	form := maxCategory(s.Scores, []string{"R", "A", "C", "M"})
 	mood := maxCategory(s.Scores, []string{"M1", "M2", "M3", "M4"})
 
 	profile := map[string]string{
 		"color": color,
+		"form":  form,
 		"mood":  mood,
 	}
 
