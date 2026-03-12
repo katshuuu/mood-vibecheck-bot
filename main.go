@@ -482,6 +482,14 @@ func initScores() map[string]float64 {
 }
 
 func handleAnswer(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("❌ PANIC в handleAnswer: %v", r)
+			// Отправляем пользователю сообщение об ошибке
+			msg := tgbotapi.NewMessage(message.Chat.ID, "😔 Произошла внутренняя ошибка. Пожалуйста, начните тест заново с /start")
+			bot.Send(msg)
+		}
+	}()
 	chatID := message.Chat.ID
 	answerText := message.Text
 	user := message.From
@@ -771,10 +779,15 @@ func applyAnswer(s *TestSession, a string) {
 }
 
 func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbotapi.User) {
+	log.Printf("🏁 Завершение теста для пользователя %d", user.ID)
+
 	// Определяем профиль
 	color := maxCategory(s.Scores, []string{"P", "B", "D", "N"})
 	form := maxCategory(s.Scores, []string{"R", "A", "C", "M"})
 	mood := maxCategory(s.Scores, []string{"M1", "M2", "M3", "M4"})
+
+	log.Printf("📊 Результаты: color=%s, form=%s, mood=%s", color, form, mood)
+	log.Printf("📊 Все scores: %+v", s.Scores)
 
 	profile := map[string]string{
 		"color": color,
@@ -782,7 +795,23 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 		"mood":  mood,
 	}
 
+	// Проверяем, что все ключи есть в соответствующих map
+	colorMap := map[string]bool{"P": true, "B": true, "D": true, "N": true}
+	formMap := map[string]bool{"R": true, "A": true, "C": true, "M": true}
+	moodMap := map[string]bool{"M1": true, "M2": true, "M3": true, "M4": true}
+
+	if !colorMap[color] {
+		log.Printf("⚠️ Внимание: неизвестный цветовой код: %s", color)
+	}
+	if !formMap[form] {
+		log.Printf("⚠️ Внимание: неизвестный код формы: %s", form)
+	}
+	if !moodMap[mood] {
+		log.Printf("⚠️ Внимание: неизвестный код настроения: %s", mood)
+	}
+
 	aiPrompt := generateAIPrompt(profile)
+	log.Printf("🤖 Сгенерированный AI промпт: %s", aiPrompt)
 
 	// Сохраняем результаты на сервере
 	err := saveResultsToBackend(chatID, user.UserName, s, profile, aiPrompt, nil)
@@ -794,8 +823,7 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 	resultText := fmt.Sprintf(`✨ _Спасибо за прохождение теста!_ ✨
 
 🌺 *Ваш тип личности:* %s
-🎨 *Цветовая гамма:* %s
-_`,
+🎨 *Цветовая гамма:* %s`,
 		getMoodName(mood),
 		getColorName(color))
 
@@ -805,6 +833,8 @@ _`,
 
 	if _, err := bot.Send(msg); err != nil {
 		log.Printf("❌ Ошибка отправки результата: %v", err)
+	} else {
+		log.Printf("✅ Результат успешно отправлен пользователю %d", user.ID)
 	}
 
 	log.Printf("✅ Тест завершен для пользователя %d, токен: %s", user.ID, s.SessionID)
@@ -867,6 +897,10 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
 }
 
 func generateAIPrompt(profile map[string]string) string {
+	if profile == nil {
+		profile = make(map[string]string)
+	}
+
 	colorMap := map[string]string{
 		"P": "pastel pink and soft peach tones with romantic delicate flowers",
 		"B": "bright coral, yellow and turquoise tones with exotic dynamic flowers",
@@ -899,6 +933,17 @@ func generateAIPrompt(profile map[string]string) string {
 			"bokeh background, award-winning photography",
 		color, form, mood,
 	)
+}
+
+// Вспомогательная функция для безопасного доступа к map
+func safeGetMap(m map[string]string, key, defaultValue string) string {
+	if key == "" {
+		return defaultValue
+	}
+	if val, ok := m[key]; ok {
+		return val
+	}
+	return defaultValue
 }
 
 func maxCategory(scores map[string]float64, keys []string) string {
