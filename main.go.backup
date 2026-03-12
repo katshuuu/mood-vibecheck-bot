@@ -2,14 +2,12 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -22,14 +20,7 @@ var (
 	backendURL string
 	siteURL    string
 	logFile    *os.File
-	startTime  = time.Now()
-	shutdownCh = make(chan struct{})
 )
-
-// HTTP клиент с таймаутами
-var httpClient = &http.Client{
-	Timeout: 10 * time.Second,
-}
 
 // Структуры данных
 type TestSession struct {
@@ -79,33 +70,10 @@ func initLogging() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 }
 
-func checkBackendHealth() bool {
-	resp, err := httpClient.Get(backendURL + "/health")
-	if err != nil {
-		log.Printf("⚠️ Бэкенд недоступен: %v", err)
-		return false
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusOK {
-		log.Println("✅ Бэкенд доступен")
-		return true
-	}
-	log.Printf("⚠️ Бэкенд вернул статус: %s", resp.Status)
-	return false
-}
-
 func main() {
 	// Инициализация логирования
 	initLogging()
 	defer logFile.Close()
-
-	// Проверяем наличие папки с фото
-	if _, err := os.Stat("photos"); os.IsNotExist(err) {
-		log.Println("📁 Папка 'photos' не найдена, создаем...")
-		os.Mkdir("photos", 0755)
-		log.Println("✅ Папка 'photos' создана")
-	}
 
 	// Читаем токен из переменных окружения
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
@@ -134,12 +102,6 @@ func main() {
 	log.Printf("🌍 Site URL: %s", siteURL)
 	log.Printf("🔧 Debug mode: %v", debug)
 
-	// Проверка бэкенда в фоне
-	go func() {
-		time.Sleep(2 * time.Second) // Даем время на запуск
-		checkBackendHealth()
-	}()
-
 	// Запускаем HTTP сервер для проверки
 	go startHTTPServer(bot, port)
 
@@ -159,11 +121,6 @@ func main() {
 	// Обрабатываем обновления
 	for update := range updates {
 		if update.Message != nil {
-			// Защита от спама - игнорируем старые сообщения
-			if update.Message.Time().Before(time.Now().Add(-10 * time.Second)) {
-				continue
-			}
-
 			// Используем мьютекс для безопасного доступа к сессиям
 			sessionsMutex.RLock()
 			session := sessions[update.Message.Chat.ID]
@@ -190,9 +147,6 @@ func setupGracefulShutdown() {
 		log.Printf("📊 Активных сессий: %d", len(sessions))
 		sessionsMutex.RUnlock()
 
-		// Сигнал для HTTP сервера
-		close(shutdownCh)
-
 		log.Println("👋 Бот остановлен")
 		os.Exit(0)
 	}()
@@ -216,15 +170,11 @@ func cleanOldSessions() {
 }
 
 func startHTTPServer(bot *tgbotapi.BotAPI, port string) {
-	mux := http.NewServeMux()
-
 	// Основной обработчик
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-
-		// Разделяем HTML и форматирование
-		html := `<!DOCTYPE html>
+		fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head>
     <title>Mood VibeCheck Bot</title>
@@ -233,7 +183,7 @@ func startHTTPServer(bot *tgbotapi.BotAPI, port string) {
             font-family: Arial, sans-serif;
             margin: 40px;
             text-align: center;
-            background: linear-gradient(135deg, #667eea 0%%, #764ba2 100%%);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }
         .container {
@@ -272,78 +222,35 @@ func startHTTPServer(bot *tgbotapi.BotAPI, port string) {
         </div>
     </div>
 </body>
-</html>`
-		fmt.Fprintf(w, html, bot.Self.UserName, backendURL, time.Now().Format("02.01.2006 15:04:05"))
+</html>`, bot.Self.UserName, backendURL, time.Now().Format("02.01.2006 15:04:05"))
 	})
 
 	// Health check для мониторинга
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-
-		sessionsMutex.RLock()
-		activeSessions := len(sessions)
-		sessionsMutex.RUnlock()
-
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":         "ok",
-			"bot":            bot.Self.UserName,
-			"time":           time.Now().Unix(),
-			"backend":        backendURL,
-			"site":           siteURL,
-			"sessions":       activeSessions,
-			"uptime_seconds": time.Since(startTime).Seconds(),
+			"status":   "ok",
+			"bot":      bot.Self.UserName,
+			"time":     time.Now().Unix(),
+			"backend":  backendURL,
+			"site":     siteURL,
+			"sessions": len(sessions),
 		})
 	})
 
-	// Метрики для мониторинга
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-
-		sessionsMutex.RLock()
-		activeSessions := len(sessions)
-		sessionsMutex.RUnlock()
-
-		fmt.Fprintf(w, "# HELP bot_active_sessions Active test sessions\n")
-		fmt.Fprintf(w, "# TYPE bot_active_sessions gauge\n")
-		fmt.Fprintf(w, "bot_active_sessions %d\n", activeSessions)
-		fmt.Fprintf(w, "bot_uptime_seconds %f\n", time.Since(startTime).Seconds())
-	})
-
-	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
-
 	log.Printf("🌐 HTTP сервер запущен на порту %s", port)
 	log.Printf("📊 Health check: http://localhost:%s/health", port)
-	log.Printf("📈 Metrics: http://localhost:%s/metrics", port)
 
-	// Запускаем сервер в горутине
-	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("⚠️ HTTP сервер ошибка: %v", err)
-		}
-	}()
-
-	// Ждем сигнала завершения
-	<-shutdownCh
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("⚠️ Ошибка при остановке HTTP сервера: %v", err)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Printf("⚠️ HTTP сервер остановлен: %v", err)
 	}
 }
 
 func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	chatID := message.Chat.ID
-	command := strings.ToLower(message.Command())
 
-	switch command {
+	switch message.Command() {
 	case "start":
 		startTest(bot, chatID, message.From)
 	case "help":
@@ -354,14 +261,12 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 }
 
 func startTest(bot *tgbotapi.BotAPI, chatID int64, user *tgbotapi.User) {
-	// Пробуем создать сессию на бэкенде, но не останавливаемся при ошибке
+	// Создаем сессию на бэкенде
 	sessionToken, orderID, err := createBackendSession(user.ID, user.UserName)
 	if err != nil {
-		log.Printf("⚠️ Не удалось создать сессию на бэкенде: %v", err)
-		log.Println("🔄 Продолжаем с локальной сессией")
-		// Создаем локальную сессию
-		sessionToken = fmt.Sprintf("local_%d_%d", user.ID, time.Now().Unix())
-		orderID = fmt.Sprintf("LOCAL-%d", time.Now().Unix()%10000)
+		log.Printf("❌ Ошибка создания сессии: %v", err)
+		send(bot, chatID, "😔 Произошла ошибка. Пожалуйста, попробуйте позже.")
+		return
 	}
 
 	// Инициализируем локальную сессию
@@ -389,9 +294,7 @@ _ready?) поехали👇_`, orderID)
 
 	msg := tgbotapi.NewMessage(chatID, welcomeMsg)
 	msg.ParseMode = "Markdown"
-	if _, err := bot.Send(msg); err != nil {
-		log.Printf("❌ Ошибка отправки приветствия: %v", err)
-	}
+	bot.Send(msg)
 
 	// Отправляем первый вопрос
 	sendQuestion(bot, chatID, 1)
@@ -411,7 +314,7 @@ func createBackendSession(telegramID int64, telegramName string) (string, string
 	log.Printf("📤 Создание сессии для пользователя %d (%s)", telegramID, telegramName)
 
 	// Используем backendURL из переменных окружения
-	resp, err := httpClient.Post(backendURL+"/api/create-session", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(backendURL+"/api/create-session", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Printf("❌ Ошибка создания сессии: %v", err)
 		return "", "", err
@@ -457,9 +360,7 @@ func sendHelp(bot *tgbotapi.BotAPI, chatID int64) {
 
 	msg := tgbotapi.NewMessage(chatID, helpText)
 	msg.ParseMode = "Markdown"
-	if _, err := bot.Send(msg); err != nil {
-		log.Printf("❌ Ошибка отправки help: %v", err)
-	}
+	bot.Send(msg)
 }
 
 func initScores() map[string]float64 {
@@ -481,27 +382,23 @@ func handleAnswer(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	sessionsMutex.RUnlock()
 
 	if session == nil {
-		log.Printf("⚠️ Сессия не найдена для чата %d", chatID)
-		msg := tgbotapi.NewMessage(chatID, "❌ Сессия не найдена. Начните тест заново с помощью /start")
-		bot.Send(msg)
 		return
 	}
 
 	// Преобразуем текст ответа в код
 	answerCode := textToCode(session.Step, answerText)
 	if answerCode == "" {
-		log.Printf("⚠️ Неизвестный ответ на шаге %d: %s", session.Step, answerText)
 		msg := tgbotapi.NewMessage(chatID, "❌ Пожалуйста, выберите один из предложенных вариантов, нажав на кнопку с ответом.")
 		bot.Send(msg)
 		return
 	}
 
-	log.Printf("📊 Пользователь %d ответил на вопрос %d: %s -> %s",
-		user.ID, session.Step, answerText, answerCode)
-
 	// Сохраняем ответ
 	applyAnswer(session, answerCode)
 	session.Step++
+
+	log.Printf("📊 Пользователь %d ответил на вопрос %d: %s",
+		user.ID, session.Step-1, answerCode)
 
 	if session.Step > 7 {
 		finishTest(bot, chatID, session, user)
@@ -640,23 +537,24 @@ func sendQuestion(bot *tgbotapi.BotAPI, chatID int64, step int) {
 		log.Printf("❌ Ошибка отправки вопроса: %v", err)
 	}
 
-	// Пытаемся отправить фото, но не критично если их нет
+	// Отправляем фото (если файлы существуют)
 	var mediaGroup []interface{}
-	photosExist := false
-
-	for _, path := range photoPaths {
-		if file, err := os.Stat(path); err == nil && !file.IsDir() {
+	for i, path := range photoPaths {
+		// Проверяем существование файла
+		if _, err := os.Stat(path); err == nil {
 			photo := tgbotapi.NewInputMediaPhoto(tgbotapi.FilePath(path))
 			mediaGroup = append(mediaGroup, photo)
-			photosExist = true
 		} else {
-			log.Printf("📷 Фото не найдено: %s, продолжаем без него", path)
+			log.Printf("⚠️ Фото не найдено: %s", path)
+			// Отправляем текст вместо фото
+			altMsg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Вариант %d: %s", i+1, options[i]))
+			bot.Send(altMsg)
 		}
 	}
 
-	if photosExist && len(mediaGroup) > 0 {
+	if len(mediaGroup) > 0 {
 		if _, err := bot.SendMediaGroup(tgbotapi.NewMediaGroup(chatID, mediaGroup)); err != nil {
-			log.Printf("⚠️ Не удалось отправить медиа-группу: %v", err)
+			log.Printf("❌ Ошибка отправки медиа-группы: %v", err)
 		}
 	}
 
@@ -672,7 +570,7 @@ func sendQuestion(bot *tgbotapi.BotAPI, chatID int64, step int) {
 		),
 	)
 
-	promptMsg := tgbotapi.NewMessage(chatID, "👇 Выберите вариант ответа:")
+	promptMsg := tgbotapi.NewMessage(chatID, "Выберите вариант ответа:")
 	promptMsg.ReplyMarkup = keyboard
 	if _, err := bot.Send(promptMsg); err != nil {
 		log.Printf("❌ Ошибка отправки клавиатуры: %v", err)
@@ -849,7 +747,7 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
 
 	log.Printf("📤 Отправка результатов теста для сессии %s", s.SessionID)
 
-	resp, err := httpClient.Post(backendURL+"/api/save-test-results", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := http.Post(backendURL+"/api/save-test-results", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Printf("❌ Ошибка отправки результатов: %v", err)
 		return err

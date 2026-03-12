@@ -1,0 +1,43 @@
+2026/03/11 22:23:00 main.go:81: ❌ TELEGRAM_BOT_TOKEN не установлен
+2026/03/11 22:23:22 main.go:81: ❌ TELEGRAM_BOT_TOKEN не установлен
+2026/03/11 22:24:20 main.go:81: ❌ TELEGRAM_BOT_TOKEN не установлен
+2026/03/11 22:24:49 main.go:81: ❌ TELEGRAM_BOT_TOKEN не установлен
+2026/03/11 22:26:28 main.go:81: ❌ TELEGRAM_BOT_TOKEN не установлен
+2026/03/11 22:26:41 main.go:81: ❌ TELEGRAM_BOT_TOKEN не установлен
+2026/03/11 22:48:02 main.go:132: ✅ Бот @YourVibeCheck_Bot успешно запущен
+2026/03/11 22:48:02 main.go:133: 🌐 Backend URL: http://localhost:3001
+2026/03/11 22:48:02 main.go:134: 🌍 Site URL: http://localhost:3001
+2026/03/11 22:48:02 main.go:135: 🔧 Debug mode: false
+2026/03/11 22:48:02 main.go:318: 🌐 HTTP сервер запущен на порту 8080
+2026/03/11 22:48:02 main.go:319: 📊 Health check: http://localhost:8080/health
+2026/03/11 22:48:02 main.go:320: 📈 Metrics: http://localhost:8080/metrics
+2026/03/11 22:48:02 main.go:157: 🤖 Бот начал прослушивание обновлений...
+2026/03/11 22:48:04 main.go:94: ⚠️ Бэкенд вернул статус: 404 Not Found
+2026/03/11 22:50:36 main.go:186: 🛑 Получен сигнал завершения, останавливаем бота...
+2026/03/11 22:50:36 main.go:190: 📊 Активных сессий: 0
+2026/03/11 22:50:36 main.go:196: 👋 Бот остановлен
+2026/03/11 22:51:17 main.go:132: ✅ Бот @YourVibeCheck_Bot успешно запущен
+2026/03/11 22:51:17 main.go:133: 🌐 Backend URL: http://localhost:3001
+2026/03/11 22:51:17 main.go:134: 🌍 Site URL: http://localhost:3001
+2026/03/11 22:51:17 main.go:135: 🔧 Debug mode: false
+2026/03/11 22:51:17 main.go:318: 🌐 HTTP сервер запущен на порту 8080
+2026/03/11 22:51:17 main.go:319: 📊 Health check: http://localhost:8080/health
+2026/03/11 22:51:17 main.go:320: 📈 Metrics: http://localhost:8080/metrics
+2026/03/11 22:51:17 main.go:157: 🤖 Бот начал прослушивание обновлений...
+2026/03/11 22:51:19 main.go:94: ⚠️ Бэкенд вернул статус: 404 Not Found
+2026/03/11 22:53:22 main.go:113: ❌ TELEGRAM_BOT_TOKEN не установлен
+2026/03/11 22:53:31 main.go:186: 🛑 Получен сигнал завершения, останавливаем бота...
+2026/03/11 22:53:31 main.go:190: 📊 Активных сессий: 0
+2026/03/11 22:53:31 main.go:196: 👋 Бот остановлен
+2026/03/11 22:53:37 main.go:113: ❌ TELEGRAM_BOT_TOKEN не установлен
+2026/03/11 22:54:27 main.go:113: ❌ TELEGRAM_BOT_TOKEN не установлен
+2026/03/11 23:00:45 main.go:132: ✅ Бот @YourVibeCheck_Bot успешно запущен
+2026/03/11 23:00:45 main.go:133: 🌐 Backend URL: http://localhost:3001
+2026/03/11 23:00:45 main.go:134: 🌍 Site URL: http://localhost:3001
+2026/03/11 23:00:45 main.go:135: 🔧 Debug mode: false
+2026/03/11 23:00:45 main.go:321: 🌐 HTTP сервер запущен на порту 8080
+2026/03/11 23:00:45 main.go:322: 📊 Health check: http://localhost:8080/health
+2026/03/11 23:00:45 main.go:323: 📈 Metrics: http://localhost:8080/metrics
+2026/03/11 23:00:45 main.go:157: 🤖 Бот начал прослушивание обновлений...
+2026/03/11 23:00:47 main.go:94: ⚠️ Бэкенд вернул статус: 404 Not Found
+2026/03/11 23:09:50 main.go:113: ❌ TELEGRAM_BOT_TOKEN не установлен
