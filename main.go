@@ -473,50 +473,64 @@ func handleAnswer(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("❌ PANIC в handleAnswer: %v", r)
-			// Отправляем пользователю сообщение об ошибке
 			msg := tgbotapi.NewMessage(message.Chat.ID, "😔 Произошла внутренняя ошибка. Пожалуйста, начните тест заново с /start")
 			bot.Send(msg)
 		}
 	}()
+
 	chatID := message.Chat.ID
 	answerText := message.Text
 	user := message.From
+
+	log.Printf("🔍 [ШАГ 1] ПОЛУЧЕН ОТВЕТ: chatID=%d, text='%s', from=%s", chatID, answerText, user.UserName)
 
 	sessionsMutex.RLock()
 	session := sessions[chatID]
 	sessionsMutex.RUnlock()
 
 	if session == nil {
-		log.Printf("⚠️ Сессия не найдена для чата %d", chatID)
+		log.Printf("⚠️ [ОШИБКА] Сессия не найдена для чата %d", chatID)
 		msg := tgbotapi.NewMessage(chatID, "❌ Сессия не найдена. Начните тест заново с помощью /start")
 		bot.Send(msg)
 		return
 	}
 
+	log.Printf("🔍 [ШАГ 2] Текущий шаг сессии: %d, токен: %s", session.Step, session.SessionID)
+
 	// Преобразуем текст ответа в код
 	answerCode := textToCode(session.Step, answerText)
+	log.Printf("🔍 [ШАГ 3] Преобразование ответа: текст='%s' -> код='%s'", answerText, answerCode)
+
 	if answerCode == "" {
-		log.Printf("⚠️ Неизвестный ответ на шаге %d: %s", session.Step, answerText)
+		log.Printf("⚠️ [ОШИБКА] Неизвестный ответ на шаге %d: %s", session.Step, answerText)
 		msg := tgbotapi.NewMessage(chatID, "❌ Пожалуйста, выберите один из предложенных вариантов, нажав на кнопку с ответом.")
 		bot.Send(msg)
 		return
 	}
 
-	log.Printf("📊 Пользователь %d ответил на вопрос %d: %s -> %s",
+	log.Printf("📊 [ШАГ 4] Пользователь %d ответил на вопрос %d: %s -> %s",
 		user.ID, session.Step, answerText, answerCode)
 
 	// Сохраняем ответ
 	applyAnswer(session, answerCode)
+	log.Printf("🔍 [ШАГ 5] Ответ применен. Текущие scores: %+v", session.Scores)
+
 	session.Step++
+	log.Printf("🔍 [ШАГ 6] Шаг увеличен: теперь %d", session.Step)
 
 	if session.Step > 7 {
+		log.Printf("🏁 [ШАГ 7] ТЕСТ ЗАВЕРШЕН! Вызов finishTest для пользователя %d", user.ID)
 		finishTest(bot, chatID, session, user)
+
+		log.Printf("🔍 [ШАГ 8] Удаление сессии для chatID %d", chatID)
 		sessionsMutex.Lock()
 		delete(sessions, chatID)
 		sessionsMutex.Unlock()
+		log.Printf("🔍 [ШАГ 9] Сессия удалена")
 		return
 	}
 
+	log.Printf("🔍 [ШАГ 10] Отправка следующего вопроса, шаг %d", session.Step)
 	sendQuestion(bot, chatID, session.Step)
 }
 
@@ -767,10 +781,14 @@ func applyAnswer(s *TestSession, a string) {
 }
 
 func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbotapi.User) {
+	log.Printf("🏁 [FINISH 1] Начало finishTest для пользователя %d, токен: %s", user.ID, s.SessionID)
+
 	// Определяем профиль
 	color := maxCategory(s.Scores, []string{"P", "B", "D", "N"})
 	form := maxCategory(s.Scores, []string{"R", "A", "C", "M"})
 	mood := maxCategory(s.Scores, []string{"M1", "M2", "M3", "M4"})
+
+	log.Printf("🏁 [FINISH 2] Результаты: color=%s, form=%s, mood=%s", color, form, mood)
 
 	profile := map[string]string{
 		"color": color,
@@ -779,11 +797,15 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 	}
 
 	aiPrompt := generateAIPrompt(profile)
+	log.Printf("🏁 [FINISH 3] AI Prompt сгенерирован: %s", aiPrompt)
 
-	// Отправляем результаты на сервер - ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩУЮ ФУНКЦИЮ
+	// Отправляем результаты на сервер
+	log.Printf("🏁 [FINISH 4] Отправка результатов на бэкенд...")
 	err := saveResultsToBackend(chatID, user.UserName, s, profile, aiPrompt, nil)
 	if err != nil {
-		log.Printf("❌ Ошибка сохранения результатов: %v", err)
+		log.Printf("❌ [FINISH ERROR] Ошибка сохранения результатов: %v", err)
+	} else {
+		log.Printf("✅ [FINISH 5] Результаты успешно отправлены на бэкенд")
 	}
 
 	// Сообщение пользователю
@@ -800,15 +822,19 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 		siteURL,
 		s.SessionID)
 
+	log.Printf("🏁 [FINISH 6] Отправка сообщения пользователю: %s", resultText)
+
 	msg := tgbotapi.NewMessage(chatID, resultText)
 	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
 
 	if _, err := bot.Send(msg); err != nil {
-		log.Printf("❌ Ошибка отправки результата: %v", err)
+		log.Printf("❌ [FINISH ERROR] Ошибка отправки результата пользователю: %v", err)
+	} else {
+		log.Printf("✅ [FINISH 7] Сообщение успешно отправлено пользователю")
 	}
 
-	log.Printf("✅ Тест завершен для пользователя %d, токен: %s", user.ID, s.SessionID)
+	log.Printf("✅ [FINISH 8] Тест полностью завершен для пользователя %d, токен: %s", user.ID, s.SessionID)
 }
 
 // Новая функция для отправки результатов
@@ -819,14 +845,18 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
 		return nil
 	}
 
-	payload := ResultPayload{
-		TelegramID:   chatID,
-		TelegramName: telegramName,
-		Profile:      profile,
-		Scores:       s.Scores,
-		AIPrompt:     aiPrompt,
-		SessionToken: s.SessionID, // ВАЖНО: это должен быть UUID из ссылки
-		Answers:      answers,
+	// Преобразуем scores в формат для сохранения в БД
+	// Сервер ожидает определенные поля в profile
+
+	// Подготовка payload для server.js
+	payload := map[string]interface{}{
+		"telegram_id":   chatID,
+		"telegram_name": telegramName,
+		"profile":       profile, // Это будет использовано для полей occasion, recipient_person_type и т.д.
+		"scores":        s.Scores,
+		"ai_prompt":     aiPrompt,
+		"session_token": s.SessionID,
+		"answers":       answers,
 	}
 
 	jsonData, err := json.Marshal(payload)
