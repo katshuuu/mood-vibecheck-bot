@@ -791,17 +791,9 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 	resultText := fmt.Sprintf(`✨ *Спасибо за прохождение теста!* ✨
 
 🌺 *Ваш тип личности:* %s
-🎨 *Цветовая гамма:* %s
-
-🔗 *Ваш уникальный букет уже готовится!*
-Перейдите по ссылке через 1-2 минуты:
-%s/quiz/%s
-
-Там вы сможете увидеть сгенерированный специально для вас букет!`,
+🎨 *Цветовая гамма:*`,
 		getMoodName(mood),
-		getColorName(color),
-		siteURL,
-		s.SessionID)
+		getColorName(color))
 
 	msg := tgbotapi.NewMessage(chatID, resultText)
 	msg.ParseMode = "Markdown"
