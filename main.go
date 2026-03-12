@@ -364,46 +364,34 @@ func handleCommand(bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
 }
 
 func startTest(bot *tgbotapi.BotAPI, chatID int64, user *tgbotapi.User, tokenFromURL string) {
-	var sessionToken string
-
-	if tokenFromURL != "" {
-		// ✅ ИСПОЛЬЗУЕМ ТОКЕН ИЗ ССЫЛКИ
-		sessionToken = tokenFromURL
-		log.Printf("✅ Используем токен из ссылки: %s", sessionToken)
-	} else {
-		// ❌ Если нет токена - это ошибка! Не создаем локальную сессию
+	if tokenFromURL == "" {
 		log.Printf("❌ ОШИБКА: Нет токена в команде /start")
 		msg := tgbotapi.NewMessage(chatID, "❌ Ошибка: неверная ссылка. Начните тест с сайта.")
 		bot.Send(msg)
 		return
 	}
 
-	// Инициализируем сессию с токеном из ссылки
+	// Токен из ссылки ДОЛЖЕН быть тем же UUID, что создал сервер
+	sessionToken := tokenFromURL
+
 	sessionsMutex.Lock()
 	sessions[chatID] = &TestSession{
 		Step:      1,
 		Scores:    initScores(),
-		SessionID: sessionToken,
-		OrderID:   fmt.Sprintf("TEST-%d", time.Now().Unix()%10000),
+		SessionID: sessionToken, // Сохраняем ТОТ ЖЕ токен
 		CreatedAt: time.Now(),
 	}
 	sessionsMutex.Unlock()
 
-	log.Printf("📝 Новая сессия создана для пользователя %d, токен: %s",
-		user.ID, sessionToken)
+	log.Printf("📝 Новая сессия создана для пользователя %d, токен: %s", user.ID, sessionToken)
 
 	// Приветственное сообщение
-	welcomeMsg := fmt.Sprintf(`✨ *you're the best,* пройди наш тест🫧
-
-ответь на небольшие вопросы быстро, за 2 минуты
-
-_ready?) поехали👇_`)
+	welcomeMsg := "✨ *you're the best,* пройди наш тест🫧\n\nответь на небольшие вопросы быстро, за 2 минуты\n\n_ready?) поехали👇_"
 
 	msg := tgbotapi.NewMessage(chatID, welcomeMsg)
 	msg.ParseMode = "Markdown"
 	bot.Send(msg)
 
-	// Отправляем первый вопрос
 	sendQuestion(bot, chatID, 1)
 }
 
@@ -779,15 +767,10 @@ func applyAnswer(s *TestSession, a string) {
 }
 
 func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbotapi.User) {
-	log.Printf("🏁 Завершение теста для пользователя %d", user.ID)
-
 	// Определяем профиль
 	color := maxCategory(s.Scores, []string{"P", "B", "D", "N"})
 	form := maxCategory(s.Scores, []string{"R", "A", "C", "M"})
 	mood := maxCategory(s.Scores, []string{"M1", "M2", "M3", "M4"})
-
-	log.Printf("📊 Результаты: color=%s, form=%s, mood=%s", color, form, mood)
-	log.Printf("📊 Все scores: %+v", s.Scores)
 
 	profile := map[string]string{
 		"color": color,
@@ -795,66 +778,45 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 		"mood":  mood,
 	}
 
-	// Проверяем, что все ключи есть в соответствующих map
-	colorMap := map[string]bool{"P": true, "B": true, "D": true, "N": true}
-	formMap := map[string]bool{"R": true, "A": true, "C": true, "M": true}
-	moodMap := map[string]bool{"M1": true, "M2": true, "M3": true, "M4": true}
-
-	if !colorMap[color] {
-		log.Printf("⚠️ Внимание: неизвестный цветовой код: %s", color)
-	}
-	if !formMap[form] {
-		log.Printf("⚠️ Внимание: неизвестный код формы: %s", form)
-	}
-	if !moodMap[mood] {
-		log.Printf("⚠️ Внимание: неизвестный код настроения: %s", mood)
-	}
-
 	aiPrompt := generateAIPrompt(profile)
-	log.Printf("🤖 Сгенерированный AI промпт: %s", aiPrompt)
 
-	// Сохраняем результаты на сервере
-	err := saveResultsToBackend(chatID, user.UserName, s, profile, aiPrompt, nil)
+	// Отправляем результаты на сервер
+	err := saveTestResultsToBackend(chatID, user.UserName, s, profile, aiPrompt)
 	if err != nil {
 		log.Printf("❌ Ошибка сохранения результатов: %v", err)
 	}
 
-	// Просто благодарим пользователя, НИКАКИХ ССЫЛОК
+	// Сообщение пользователю
 	resultText := fmt.Sprintf(`✨ _Спасибо за прохождение теста!_ ✨
 
 🌺 *Ваш тип личности:* %s
-🎨 *Цветовая гамма:* %s`,
+🎨 *Цветовая гамма:* %s
+
+🔗 Перейдите по ссылке через 1-2 минуты:
+%s/quiz/%s`,
 		getMoodName(mood),
-		getColorName(color))
+		getColorName(color),
+		siteURL,
+		s.SessionID) // Здесь должен быть токен из ссылки!
 
 	msg := tgbotapi.NewMessage(chatID, resultText)
 	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
-
-	if _, err := bot.Send(msg); err != nil {
-		log.Printf("❌ Ошибка отправки результата: %v", err)
-	} else {
-		log.Printf("✅ Результат успешно отправлен пользователю %d", user.ID)
-	}
+	bot.Send(msg)
 
 	log.Printf("✅ Тест завершен для пользователя %d, токен: %s", user.ID, s.SessionID)
 }
 
-func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, profile map[string]string, aiPrompt string, answers map[string]string) error {
-	// Проверяем, что это не локальная сессия
-	if strings.HasPrefix(s.SessionID, "local_") {
-		log.Printf("⚠️ Локальная сессия, не отправляем на бэкенд: %s", s.SessionID)
-		return nil
-	}
-
-	payload := ResultPayload{
-		TelegramID:   chatID,
-		TelegramName: telegramName,
-		Profile:      profile,
-		Scores:       s.Scores,
-		AIPrompt:     aiPrompt,
-		SessionToken: s.SessionID,
-		Answers:      answers,
+// Новая функция для отправки результатов
+func saveTestResultsToBackend(telegramID int64, telegramName string, s *TestSession, profile map[string]string, aiPrompt string) error {
+	payload := map[string]interface{}{
+		"telegram_id":   telegramID,
+		"telegram_name": telegramName,
+		"profile":       profile,
+		"scores":        s.Scores,
+		"ai_prompt":     aiPrompt,
+		"session_token": s.SessionID, // Важно: это должен быть тот же токен, что в ссылке
+		"answers":       nil,
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -862,36 +824,18 @@ func saveResultsToBackend(chatID int64, telegramName string, s *TestSession, pro
 		return err
 	}
 
+	// Отправляем на правильный endpoint
 	url := backendURL + "/api/save-test-results"
 	log.Printf("📤 Отправка результатов на %s для сессии %s", url, s.SessionID)
 
 	resp, err := httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		log.Printf("❌ Ошибка отправки: %v", err)
 		return err
 	}
 	defer resp.Body.Close()
 
-	// Читаем ответ для отладки
 	body, _ := io.ReadAll(resp.Body)
-	log.Printf("📥 Ответ от сервера: %s", string(body))
-
-	var response struct {
-		Success   bool   `json:"success"`
-		Message   string `json:"message"`
-		RequestID string `json:"requestId"`
-	}
-
-	if err := json.Unmarshal(body, &response); err != nil {
-		log.Printf("❌ Ошибка парсинга ответа: %v, тело: %s", err, string(body))
-		return err
-	}
-
-	if response.Success {
-		log.Printf("✅ Результаты сохранены! RequestID: %s", response.RequestID)
-	} else {
-		log.Printf("⚠️ Сервер вернул ошибку: %s", response.Message)
-	}
+	log.Printf("📥 Ответ сервера: %s", string(body))
 
 	return nil
 }
