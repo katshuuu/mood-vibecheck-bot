@@ -788,7 +788,7 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 	}
 
 	// Сообщение пользователю
-	resultText := fmt.Sprintf(`✨ *Спасибо за прохождение теста!* ✨
+	resultText := fmt.Sprintf(`_Спасибо за прохождение теста_✨
 
 🌺 *Ваш тип личности:* %s
 🎨 *Цветовая гамма:* %s`,
