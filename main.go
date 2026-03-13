@@ -791,7 +791,7 @@ func finishTest(bot *tgbotapi.BotAPI, chatID int64, s *TestSession, user *tgbota
 	resultText := fmt.Sprintf(`✨ *Спасибо за прохождение теста!* ✨
 
 🌺 *Ваш тип личности:* %s
-🎨 *Цветовая гамма:*`,
+🎨 *Цветовая гамма:* %s`,
 		getMoodName(mood),
 		getColorName(color))
 
